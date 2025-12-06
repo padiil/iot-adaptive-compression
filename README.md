@@ -74,7 +74,7 @@
  * Docker and Docker Compose installed on your machine.
 
  ### Step 1: Build and Start the System
- Run the following command in the root directory. This will build the Go and Python images and start the network.
+ Run the following command in the root directory. This will build the Go and - images and start the network.
 
  ```bash
  docker compose up --build
