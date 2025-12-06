@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package iot;
+
+option go_package = "./proto";
+
+// Definisi Service (Fungsi yang bisa dipanggil)
+service DataTransfer {
+  // Menggunakan "stream" agar data bisa mengalir terus menerus tanpa putus koneksi
+  rpc SendStream (stream SensorData) returns (ServerResponse);
+}
+
+// Struktur Data yang dikirim
+message SensorData {
+  string sensor_id = 1;
+  double timestamp = 2;
+  string compression_type = 3;
+  bytes data = 4;
+}
+
+// Balasan dari Server
+message ServerResponse {
+  bool success = 1;
+  string message = 2;
+}
