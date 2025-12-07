@@ -18,15 +18,13 @@
  The system is built using a Polyglot Microservices architecture containerized with Docker.
 
  ### A. Edge Node (The Sender)
- * **Technology:** Go (Golang) v1.21
+ * **Technology:** Go (Golang) v1.23
  * **Role:** Simulates high-frequency sensor data generation and implements the adaptive compression logic.
- * **Why Go?** Chosen for its superior concurrency handling (Goroutines/Channels) and performance in handling high-throughput streams.
+ * **Why Go?** Chosen for its superior concurrency handling (Goroutines/Channels) and performance in handling high-throughput streams with minimal CPU overhead.
 
- ### B. Central Node (The Receiver)
- * **Technology:** -
- * **Role:** Acts as the Cloud/Data Center. It receives the stream, decompresses data based on the flag, and logs performance metrics (send time, receive time, latency) to CSV.
-
- ### C. Communication Layer
+### B. Central Node (The Receiver)
+* **Technology:** Python 3.11 with gRPC & PostgreSQL
+* **Role:** Acts as the Cloud/Data Center. It receives the stream, decompresses data based on the flag, and stores it in PostgreSQL database with performance metrics. ### C. Communication Layer
  * **Protocol:** gRPC (HTTP/2)
  * **Serialization:** Protocol Buffers (Protobuf)
  * **Why gRPC?** Enables efficient bi-directional binary streaming, which is critical for IoT telemetry.
@@ -37,28 +35,29 @@
 
  ## 3. Project Structure
 
- ```text
- iot-adaptive-compression/
- ├── central-node/           # Server Implementation
- │   ├── ---
- │   ├── Dockerfile          # container config
- │   └── ---
- ├── edge-node/              # Go Client Implementation
- │   ├── config/             # Configuration constants
- │   ├── models/             # Internal data structures
- │   ├── proto/              # Generated gRPC code for Go
- │   ├── services/           # Sensor simulation logic
- │   ├── utils/              # Compression & Logging utilities
- │   ├── main.go             # Main adaptive logic entry point
- │   ├── go.mod              # Go module definition
- │   └── Dockerfile          # Go container config
- ├── proto/                  # Shared Protocol Definitions
- │   └── iot.proto           # The gRPC contract
- ├── compose.yaml            # Docker Compose orchestration
- └── README.md               # Documentation
- ```
-
- ## 4. Adaptive Logic Mechanism
+```text
+iot-adaptive-compression/
+├── central-node/           # Python Server Implementation
+│   ├── server.py          # Main gRPC server
+│   ├── requirements.txt   # Python dependencies
+│   ├── proto/             # Generated gRPC code for Python
+│   ├── database/          # PostgreSQL handler
+│   ├── utils/             # Logger utilities
+│   └── Dockerfile         # Python container config
+├── edge-node/              # Go Client Implementation
+│   ├── config/             # Configuration constants
+│   ├── models/             # Internal data structures
+│   ├── proto/              # Generated gRPC code for Go
+│   ├── services/           # Sensor simulation logic
+│   ├── utils/              # Compression & Logging utilities
+│   ├── main.go             # Main adaptive logic entry point
+│   ├── go.mod              # Go module definition
+│   └── Dockerfile          # Go container config
+├── proto/                  # Shared Protocol Definitions
+│   └── iot.proto           # The gRPC contract
+├── compose.yaml            # Docker Compose orchestration
+└── README.md               # Documentation
+``` ## 4. Adaptive Logic Mechanism
 
  The Edge Node implements a feedback loop based on the `Queue Size` (buffer backlog).
 
@@ -73,39 +72,161 @@
  ### Prerequisites
  * Docker and Docker Compose installed on your machine.
 
- ### Step 1: Build and Start the System
- Run the following command in the root directory. This will build the Go and - images and start the network.
+### Step 1: Build and Start the System
+Run the following command in the root directory. This will build the Go and Python images and start the network including PostgreSQL database.
 
- ```bash
- docker compose up --build
- ```
-
- *Observation:*
+```bash
+docker compose up --build
+``` *Observation:*
  * You will see logs from `central-node` indicating it is ready.
  * You will see logs from `edge-node` showing the current mode (initially **RAW**).
 
- ### Step 2: Simulate Network Failure (Chaos Testing)
- To verify the adaptive logic, we need to simulate a slow network. Open a **new terminal** and run Pumba (configured in `compose.yaml`) or use Linux `tc` commands if running locally.
+ ### Step 2: Monitor System Behavior
+ The system will start in **RAW mode** (no compression) when the network is healthy:
 
- If using the provided Pumba configuration in `compose.yaml`, it runs automatically on a schedule.
- * **Wait for ~30 seconds**: Pumba will inject a **500ms delay** to the Edge Node container.
- * **Check Logs**: You will see the Edge Node queue building up rapidly.
- * **Verify Adaptation**: The logs will switch from `✅ Mode: RAW` to `⚠️ Mode: LZ4`, and finally to `🔥 Mode: GZIP`.
+```bash
+docker compose logs -f edge-node
+```
 
- ### Step 3: Analyze Results
- The Central Node logs every received packet to a CSV file.
- 1.  Stop the containers: `Ctrl+C` or `docker compose down`.
- 2.  Locate the data: `central-node/data/analisis_latensi.csv` (mapped via volume).
- 3.  Use this CSV to generate graphs for the final report.
+You should see logs like:
+```
+level=INFO msg="Jaringan Lancar" queue=0 mode=RAW size_in=2720 latency_cpu=250ns
+```
 
- ## 6. Development Notes (Local Run)
+### Step 3: Simulate Network Congestion (Optional Chaos Testing)
+
+To trigger adaptive compression and see the system switch modes automatically, you can:
+
+**Option 1: Increase Data Generation Rate**
+Edit `edge-node/services/sensor.go` and reduce the sleep time from `20ms` to `5ms`. Rebuild with:
+```bash
+docker compose up -d --build edge-node
+```
+
+**Option 2: Add Network Latency**
+Use Docker exec to add artificial delay:
+```bash
+docker exec iot-edge-node sh -c "apk add iproute2 && tc qdisc add dev eth0 root netem delay 500ms"
+```
+
+**What You'll See:**
+* Queue builds up: `queue=350` → Mode switches to **LZ4**
+* Queue continues growing: `queue=750` → Mode switches to **GZIP**
+* Compression ratio: ~96% (2720 bytes → 105 bytes)
+* CPU latency increases: ~100µs (vs 250ns in RAW mode)
+
+When network recovers (queue drains), system automatically switches back to RAW mode.
+
+ ### Step 4: Verify Data Persistence
+ Check that data is being stored in PostgreSQL:
+
+```bash
+docker exec iot-postgres psql -U postgres -d iot_data -c "SELECT COUNT(*), compression_type FROM sensor_data GROUP BY compression_type;"
+```
+
+Expected output:
+```
+ count | compression_type 
+-------+------------------
+  1500 | RAW
+   250 | LZ4
+   180 | GZIP
+```
+
+### Step 5: Stop the System
+```bash
+docker compose down
+```
+
+ ## 6. Interactive Demonstration Guide
+
+We provide automated demo scripts to showcase the adaptive compression behavior:
+
+### 🎬 **Demo 1: Normal Mode (RAW - No Compression)**
+```powershell
+docker compose up -d
+docker compose logs -f edge-node
+```
+**Expected Output:**
+```
+level=INFO msg="Jaringan Lancar" queue=0 mode=RAW size_in=2720 latency_cpu=250ns
+```
+**Explanation:** Network is stable, no compression needed. Prioritizes **minimum latency**.
+
+---
+
+### 🎬 **Demo 2: Congested Network (LZ4 - Fast Compression)**
+```powershell
+.\demo-congestion.ps1
+```
+**What Happens:**
+- Data generation increases (20ms → 8ms)
+- Queue builds up: **300-700**
+- System switches to **LZ4** compression
+- Compression ratio: ~85% (2720 → ~400 bytes)
+- CPU latency: ~5-10µs
+
+**Expected Output:**
+```
+level=WARN msg="Jaringan Padat - Kompresi Ringan" queue=450 mode=LZ4 size_in=2720 size_out=420 saved_pct=84.5
+```
+
+---
+
+### 🎬 **Demo 3: Critical Network (GZIP - Maximum Compression)**
+```powershell
+.\demo-critical.ps1
+```
+**What Happens:**
+- Data generation at max speed (20ms → 2ms)
+- Queue fills up: **700-999**
+- System switches to **GZIP** compression
+- Compression ratio: ~96% (2720 → 105 bytes!)
+- CPU latency: ~100µs (trade-off for bandwidth saving)
+
+**Expected Output:**
+```
+level=WARN msg="Jaringan Macet - Kompresi Berat" queue=999 mode=GZIP size_in=2720 size_out=105 saved_pct=96.13 latency_cpu=100µs
+```
+
+---
+
+### 🎬 **Demo 4: Reset to Normal**
+```powershell
+.\demo-reset.ps1
+```
+Restores system to normal operation (RAW mode).
+
+---
+
+### 🎬 **Demo 5: Database Verification**
+```powershell
+.\demo-database.ps1
+```
+Shows data persistence and compression statistics in PostgreSQL.
+
+---
+
+### 📊 **Key Metrics to Observe**
+
+| Metric | RAW Mode | LZ4 Mode | GZIP Mode |
+|--------|----------|----------|-----------|
+| **Queue Size** | 0-10 | 300-700 | 700-999 |
+| **Data Size** | 2720 bytes | ~400 bytes | ~105 bytes |
+| **Compression** | 0% | ~85% | ~96% |
+| **CPU Latency** | 250 ns | 5-10 µs | 100 µs |
+| **Trade-off** | Speed ✅ | Balanced | Bandwidth ✅ |
+
+---
+
+## 7. Development Notes (Local Run)
 
  If you want to run without Docker for debugging:
 
  1.  **Start Server:**
      ```bash
      cd central-node
-     ---
+     python server.py
      ```
  2.  **Start Edge Node:**
      ```bash

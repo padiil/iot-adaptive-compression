@@ -35,6 +35,6 @@ func GenerateDummyData(queue chan<- models.LocalData) {
 		default:
 		}
 
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 }

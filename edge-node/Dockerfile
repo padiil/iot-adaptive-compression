@@ -1,21 +1,37 @@
-# Stage 1: Build
-FROM golang:1.21-alpine AS builder
+# Build stage
+FROM golang:1.23-alpine AS builder
+
 WORKDIR /app
 
-# Copy file dependency
-COPY go.mod go.sum ./
-RUN go mod download
+# Install dependencies
+RUN apk add --no-cache git
 
-# Copy source code
+# Copy all source first
 COPY . .
 
+# Download dependencies and tidy
+RUN go mod download && go mod tidy
+
 # Build binary
-RUN go build -o edge-app main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o edge-node .
 
-# Stage 2: Run
+# Runtime stage
 FROM alpine:latest
-WORKDIR /app
-COPY --from=builder /app/edge-app .
 
-# Command jalan
-CMD ["./edge-app"]
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /root/
+
+# Copy binary from builder
+COPY --from=builder /app/edge-node .
+
+# Create non-root user
+RUN addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser && \
+    chown -R appuser:appuser /root
+
+USER appuser
+
+EXPOSE 50051
+
+CMD ["./edge-node"]

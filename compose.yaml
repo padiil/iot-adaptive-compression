@@ -1,0 +1,63 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: iot-postgres
+    environment:
+      POSTGRES_DB: iot_data
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - iot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Central Node (Python gRPC Server)
+  central-node:
+    build:
+      context: .
+      dockerfile: ./central-node/Dockerfile
+    container_name: iot-central-node
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: iot_data
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      GRPC_PORT: 50051
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+  # Edge Node (Go gRPC Client)
+  edge-node:
+    build:
+      context: ./edge-node
+      dockerfile: Dockerfile
+    container_name: iot-edge-node
+    environment:
+      SERVER_ADDRESS: central-node:50051
+    depends_on:
+      - central-node
+    networks:
+      - iot-network
+    restart: unless-stopped
+
+networks:
+  iot-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

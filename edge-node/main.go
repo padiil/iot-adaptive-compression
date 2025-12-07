@@ -82,7 +82,8 @@ func main() {
 			break
 		}
 
-		time.Sleep(20 * time.Millisecond)
+		// Small delay untuk simulasi real-world processing
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	// Cleanup
