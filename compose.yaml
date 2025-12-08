@@ -1,63 +1,70 @@
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: iot-postgres
-    environment:
-      POSTGRES_DB: iot_data
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - iot-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Central Node (Python gRPC Server)
+  # 1. CENTRAL NODE (Server)
   central-node:
     build:
       context: .
       dockerfile: ./central-node/Dockerfile
-    container_name: iot-central-node
-    environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: iot_data
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      GRPC_PORT: 50051
+    container_name: central-node
     ports:
       - "50051:50051"
+    environment:
+      - GRPC_PORT=50051
+      - DB_HOST=mongodb
+      - DB_PORT=27017
+      - DB_NAME=iot_data
     depends_on:
-      postgres:
-        condition: service_healthy
+      - mongodb
+    volumes:
+      - ./hasil_analisis:/app/data:Z
     networks:
-      - iot-network
-    restart: unless-stopped
+      - iot-net
 
-  # Edge Node (Go gRPC Client)
+  # 2. DATABASE (MongoDB)
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - iot-net
+
+  # 3. EDGE NODE (Client)
   edge-node:
     build:
       context: ./edge-node
       dockerfile: Dockerfile
-    container_name: iot-edge-node
+    container_name: edge-node
+    restart: on-failure
+    ports:
+      - "8080:8080"
     environment:
-      SERVER_ADDRESS: central-node:50051
+      - SERVER_ADDRESS=central-node:50051
     depends_on:
       - central-node
     networks:
-      - iot-network
-    restart: unless-stopped
+      - iot-net
+
+  # 4. PUMBA (Network chaos)
+  pumba:
+    image: docker.io/gaiaadm/pumba:latest
+    command: >
+      --interval 30s 
+      --random 
+      --duration 20s 
+      netem --delay 500ms 
+      edge-node
+    volumes:
+      - /run/user/1000/podman/podman.sock:/var/run/docker.sock:z
+    security_opt:
+      - label=disable
+    networks:
+      - iot-net
 
 networks:
-  iot-network:
+  iot-net:
     driver: bridge
 
 volumes:
-  postgres_data:
+  mongo_data:

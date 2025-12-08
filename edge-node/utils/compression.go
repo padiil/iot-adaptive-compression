@@ -16,10 +16,9 @@ func CompressGzip(input []byte) []byte {
 }
 
 func CompressLz4(input []byte) []byte {
-	buf := make([]byte, lz4.CompressBlockBound(len(input)))
-	n, err := lz4.CompressBlock(input, buf, nil)
-	if err != nil {
-		return input
-	}
-	return buf[:n]
+	var b bytes.Buffer
+	w := lz4.NewWriter(&b)
+	w.Write(input)
+	w.Close()
+	return b.Bytes()
 }

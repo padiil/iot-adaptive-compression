@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"time"
 
+	"edge-node/config"
 	"edge-node/models"
 )
 
@@ -35,6 +36,7 @@ func GenerateDummyData(queue chan<- models.LocalData) {
 		default:
 		}
 
-		time.Sleep(20 * time.Millisecond)
+		sensorDelay, _ := config.Current.GetValues()
+		time.Sleep(sensorDelay)
 	}
 }

@@ -1,102 +1,144 @@
+import csv
 import grpc
-from concurrent import futures
-import time
+import os
 import signal
 import sys
-import os
+import time
+import zlib
+from concurrent import futures
 
-from proto import DataTransferServicer, add_DataTransferServicer_to_server, SensorData, ServerResponse
+import lz4.frame
+
+from proto import DataTransferServicer, add_DataTransferServicer_to_server, ServerResponse
 from database import Database
 from utils import setup_logger
 
-# Setup logger
 logger = setup_logger()
+
+CSV_FILE = "/app/data/analisis_latensi.csv"
 
 
 class DataTransferService(DataTransferServicer):
-    """Implementation of gRPC DataTransfer service"""
+    """gRPC service that logs to CSV and MongoDB"""
 
     def __init__(self, db: Database):
         self.db = db
         self.received_count = 0
-        self.last_log_time = time.time()
-        self.log_interval = 5  # Log stats every 5 seconds
+
+        # Buat folder data jika belum ada
+        os.makedirs(os.path.dirname(CSV_FILE), exist_ok=True)
+        
+        # Reset file CSV setiap kali server nyala (Mode 'w')
+        with open(CSV_FILE, "w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                "timestamp_kirim",
+                "timestamp_terima",
+                "latensi_ms",
+                "tipe_kompresi",
+                "ukuran_paket_bytes",
+                "ukuran_asli_bytes",
+                "hemat_persen",
+                "waktu_proses_server_ms",
+            ])
 
     def SendStream(self, request_iterator, context):
-        """Handle streaming sensor data from edge nodes"""
         logger.info("🔌 Client terhubung! Stream dimulai...")
-
         success_count = 0
-        failed_count = 0
 
         try:
             for sensor_data in request_iterator:
-                # Log received data
+                start_process = time.time()
                 self.received_count += 1
 
-                # Decompress and save to database
-                success = self.db.insert_sensor_data(
-                    sensor_id=sensor_data.sensor_id,
-                    timestamp=sensor_data.timestamp,
-                    compression_type=sensor_data.compression_type,
-                    data=sensor_data.data
-                )
+                # --- 1. LOGIKA DEKOMPRESI ---
+                try:
+                    if sensor_data.compression_type == "GZIP":
+                        payload_asli = zlib.decompress(sensor_data.data)
+                    elif sensor_data.compression_type == "LZ4":
+                        # Menggunakan Frame Decompression (Standar)
+                        payload_asli = lz4.frame.decompress(sensor_data.data)
+                    else:
+                        # RAW
+                        payload_asli = sensor_data.data
+                except Exception as exc:
+                    # Log error tapi jangan matikan server, lanjut ke data berikutnya
+                    logger.error(f"❌ Gagal dekompresi {sensor_data.compression_type}: {exc}")
+                    continue
 
-                if success:
+                # --- 2. HITUNG METRIK ---
+                waktu_terima = time.time()
+                latensi_ms = (waktu_terima - sensor_data.timestamp) * 1000
+
+                uk_asli = len(payload_asli)
+                uk_paket = len(sensor_data.data)
+                
+                hemat_persen = 0.0
+                if uk_asli > 0:
+                    hemat_persen = 100 - (uk_paket / uk_asli * 100)
+
+                proc_ms = (time.time() - start_process) * 1000
+
+                # --- 3. TULIS KE CSV (Laporan) ---
+                with open(CSV_FILE, "a", newline="") as file:
+                    writer = csv.writer(file)
+                    writer.writerow([
+                        f"{sensor_data.timestamp:.4f}",
+                        f"{waktu_terima:.4f}",
+                        f"{latensi_ms:.2f}",
+                        sensor_data.compression_type,
+                        uk_paket,
+                        uk_asli,
+                        f"{hemat_persen:.1f}",
+                        f"{proc_ms:.3f}",
+                    ])
+
+                # --- 4. TULIS KE MONGODB (Sistem) ---
+                doc = {
+                    "sensor_id": sensor_data.sensor_id,
+                    "timestamp_kirim": sensor_data.timestamp, # Nanti dikonversi jadi Date di db_handler
+                    "timestamp_terima": waktu_terima,
+                    "latensi_ms": latensi_ms,
+                    "compression_type": sensor_data.compression_type,
+                    "data_size": uk_paket,
+                    # Simpan data mentah (binary)
+                    "raw_data": sensor_data.data, 
+                }
+
+                if self.db.insert_sensor_data(doc):
                     success_count += 1
-                else:
-                    failed_count += 1
 
-                # Periodic logging
-                current_time = time.time()
-                if current_time - self.last_log_time >= self.log_interval:
+                # Log periodic (biar terminal gak penuh spam)
+                if self.received_count % 50 == 0:
                     logger.info(
-                        f"📊 Total data diterima: {self.received_count}")
-                    self.last_log_time = current_time
+                        f"📊 Paket #{self.received_count} | {sensor_data.compression_type:4s} | Latensi: {latensi_ms:.1f}ms | Hemat: {hemat_persen:.1f}%"
+                    )
 
-        except Exception as e:
-            logger.error(f"❌ Error saat menerima stream: {e}")
-            return ServerResponse(
-                success=False,
-                message=f"Error: {str(e)}"
-            )
-        finally:
-            logger.info(
-                f"🔌 Client terputus. Total diterima: {self.received_count} (berhasil: {success_count}, gagal: {failed_count})")
+        except Exception as exc:
+            logger.error(f"❌ Error Stream: {exc}")
+            return ServerResponse(success=False, message=str(exc))
 
-        # Return single response at the end
-        return ServerResponse(
-            success=True,
-            message=f"Stream selesai. Diterima {success_count} data"
-        )
+        return ServerResponse(success=True, message=f"Selesai. Total: {success_count}")
 
 
 def serve():
-    """Start the gRPC server"""
-    # Initialize database
     db = Database()
     try:
         db.connect()
-    except Exception as e:
-        logger.error(f"❌ Gagal inisialisasi database: {e}")
+    except Exception as exc:
+        logger.error(f"❌ DB Error: {exc}")
         sys.exit(1)
 
-    # Create gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     add_DataTransferServicer_to_server(DataTransferService(db), server)
 
-    # Get port from environment or use default
     port = os.getenv("GRPC_PORT", "50051")
-    server.add_insecure_port(f'[::]:{port}')
-
-    # Start server
+    server.add_insecure_port(f"[::]:{port}")
     server.start()
-    logger.info(f"🚀 Central Node berjalan di port {port}")
-    logger.info("⏳ Menunggu koneksi dari Edge Node...")
+    logger.info(f"🚀 Central Node (MongoDB + CSV) running on port {port}")
 
-    # Graceful shutdown handler
     def signal_handler(sig, frame):
-        logger.info("\n🛑 Menerima signal shutdown...")
+        logger.info("🛑 Menerima signal shutdown...")
         server.stop(5)
         db.close()
         logger.info("✅ Server dihentikan dengan aman")
@@ -105,17 +147,14 @@ def serve():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Keep server running
     try:
         server.wait_for_termination()
     except KeyboardInterrupt:
-        logger.info("\n🛑 Shutdown dari keyboard...")
-        server.stop(5)
-        db.close()
+        signal_handler(None, None)
 
 
-if __name__ == '__main__':
-    logger.info("=" * 50)
-    logger.info("🏢 CENTRAL NODE - IoT Adaptive Compression System")
-    logger.info("=" * 50)
+if __name__ == "__main__":
+    logger.info("=" * 40)
+    logger.info("🏢 CENTRAL NODE - IoT Analysis Server")
+    logger.info("=" * 40)
     serve()

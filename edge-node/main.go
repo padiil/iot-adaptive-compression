@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"edge-node/api"
 	"edge-node/config"
 	"edge-node/models"
 	pb "edge-node/proto"
@@ -20,6 +21,7 @@ import (
 
 func main() {
 	// 1. Inisialisasi Koneksi
+	api.StartControlServer()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
@@ -83,7 +85,8 @@ func main() {
 		}
 
 		// Small delay untuk simulasi real-world processing
-		time.Sleep(10 * time.Millisecond)
+		_, netDelay := config.Current.GetValues()
+		time.Sleep(netDelay)
 	}
 
 	// Cleanup
