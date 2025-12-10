@@ -1,9 +1,10 @@
 package api
 
 import (
-	"edge-node/config"
 	"fmt"
 	"net/http"
+
+	"edge-node/config"
 )
 
 func StartControlServer() {
@@ -12,16 +13,13 @@ func StartControlServer() {
 	http.HandleFunc("/case/1", func(w http.ResponseWriter, r *http.Request) {
 		config.Current.SetValues(100, 10)
 		msg := "✅ KASUS 1 (RAW): Data Lancar, Antrian Kosong"
-		fmt.Println("\n" + msg)
-		w.Write([]byte(msg))
+		fmt.Println("\n" + msg) // Print di terminal Edge Node
+		w.Write([]byte(msg))    // Kirim balasan ke Dashboard
 	})
 
 	// --- KASUS 2: OVERLOAD DATA (LZ4) ---
 	// Sensor (40ms) vs Network (50ms).
-	// Selisih cuma 10ms.
-	// Artinya: Butuh 100 siklus (5 detik) buat nambah 1 antrian.
-	// Butuh waktu lamaaaa banget buat nyampe 800 (GZIP).
-	// Jadi LZ4 akan tampil lama.
+	// Selisih cuma 10ms. Antrian naik perlahan.
 	http.HandleFunc("/case/2", func(w http.ResponseWriter, r *http.Request) {
 		config.Current.SetValues(40, 50)
 		msg := "⚠️ KASUS 2 (Smooth LZ4): Data Lumayan Lancar, Antrian Sedikit Naik"
@@ -31,7 +29,7 @@ func StartControlServer() {
 
 	// --- KASUS 3: GANGGUAN SINYAL (LZ4) ---
 	// Sensor (100ms) vs Network (120ms).
-	// Ini lebih lambat lagi. LZ4 bakal awet banget.
+	// Data lambat, tapi jaringan lebih lambat. Antrian naik perlahan.
 	http.HandleFunc("/case/3", func(w http.ResponseWriter, r *http.Request) {
 		config.Current.SetValues(100, 120)
 		msg := "⚠️ KASUS 3 (Stable LZ4): Data Lambat, Antrian Meningkat"

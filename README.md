@@ -1,4 +1,4 @@
- # Latency and Throughput Analysis in Distributed IoT Stream Processing
+# Latency and Throughput Analysis in Distributed IoT Stream Processing
  ## with Dynamic Data Compression Implementation at Edge Nodes
 
  ---
@@ -32,6 +32,17 @@
  ### D. Infrastructure & Simulation
  * **Containerization:** Docker & Docker Compose.
  * **Network Chaos:** **Pumba** is used to inject artificial network delays (latency) and packet loss to simulate real-world "bad internet" conditions, triggering the adaptive logic.
+
+### E. Visual Dashboard (Streamlit)
+* **Technology:** Python + Streamlit
+* **Role:** Real-time web dashboard for monitoring and controlling the demo
+* **Features:**
+  - Real-time latency and bandwidth efficiency charts
+  - Sidebar control: switch scenarios (RAW, LZ4, GZIP) directly from the web
+  - Live statistics: incoming data, active mode, bandwidth savings
+* **Access:**
+  - Start the system, then open your browser at: [http://localhost:8501](http://localhost:8501)
+  - Use the sidebar buttons to change the demo mode instantly
 
  ## 3. Project Structure
 
@@ -81,33 +92,29 @@ docker compose up --build
  * You will see logs from `central-node` indicating it is ready.
  * You will see logs from `edge-node` showing the current mode (initially **RAW**).
 
- ### Step 2: Monitor System Behavior
- The system will start in **RAW mode** (no compression) when the network is healthy:
+ ### Step 2: Monitor System Behavior & Dashboard
 
+- To monitor edge node logs:
 ```bash
 docker compose logs -f edge-node
 ```
+- To access the visual dashboard:
+```bash
+# Make sure all services are built and running
+# Then open in your browser:
+http://localhost:8501
+```
 
-You should see logs like:
-```
-level=INFO msg="Jaringan Lancar" queue=0 mode=RAW size_in=2720 latency_cpu=250ns
-```
+**Dashboard Features:**
+- Latency (moving average) and data size (original vs compressed) charts
+- Sidebar control: click buttons to switch demo scenarios (RAW, LZ4, GZIP)
+- Command status notifications (toast)
 
 ### Step 3: Simulate Network Congestion (Optional Chaos Testing)
 
-To trigger adaptive compression and see the system switch modes automatically, you can:
-
-**Option 1: Increase Data Generation Rate**
-Edit `edge-node/services/sensor.go` and reduce the sleep time from `20ms` to `5ms`. Rebuild with:
-```bash
-docker compose up -d --build edge-node
-```
-
-**Option 2: Add Network Latency**
-Use Docker exec to add artificial delay:
-```bash
-docker exec iot-edge-node sh -c "apk add iproute2 && tc qdisc add dev eth0 root netem delay 500ms"
-```
+- **Manual method:**
+  - You can still use the old demo scripts, or
+  - **Just click the sidebar buttons on the dashboard** to change the demo mode in real time!
 
 **What You'll See:**
 * Queue builds up: `queue=350` → Mode switches to **LZ4**
@@ -140,7 +147,9 @@ docker compose down
 
  ## 6. Interactive Demonstration Guide
 
-We provide automated demo scripts to showcase the adaptive compression behavior:
+- Now, besides using demo scripts, you can:
+  - **Directly control the demo mode from the web dashboard** (left sidebar)
+  - See the charts update in real time according to the selected mode
 
 ### 🎬 **Demo 1: Normal Mode (RAW - No Compression)**
 ```powershell

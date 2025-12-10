@@ -5,28 +5,28 @@ import (
 	"time"
 )
 
-// Konstanta Statis
 const (
-	ServerAddress   = "central-node:50051"
-	QueueCap        = 1000
+	ServerAddress = "central-node:50051"
+	QueueCap      = 1000
+	// Threshold disetel lebar biar LZ4 kelihatan lama
 	ThresholdMedium = 10
 	ThresholdHigh   = 800
 )
 
-// Konfigurasi Dinamis (Bisa diubah lewat API)
+// DynamicConfig menyimpan settingan yang bisa berubah
 type DynamicConfig struct {
-	sync.RWMutex
-	SensorSleep  time.Duration // Mengatur Volume Data (Makin kecil = Makin Banyak Data)
-	NetworkSleep time.Duration // Mengatur Latensi Jaringan (Makin besar = Makin Macet)
+	sync.RWMutex // Kunci biar gak crash pas diakses barengan
+	SensorSleep  time.Duration
+	NetworkSleep time.Duration
 }
 
-// Default awal: KASUS 1 (Normal & Lancar)
+// Inisialisasi Default (Kasus 1)
 var Current = &DynamicConfig{
-	SensorSleep:  100 * time.Millisecond, // 10 data/detik (Santai)
-	NetworkSleep: 10 * time.Millisecond,  // Kirim ngebut
+	SensorSleep:  100 * time.Millisecond,
+	NetworkSleep: 10 * time.Millisecond,
 }
 
-// Setter Aman
+// Fungsi Aman untuk Mengubah Nilai
 func (c *DynamicConfig) SetValues(sensorMs, netMs int) {
 	c.Lock()
 	defer c.Unlock()
@@ -34,7 +34,7 @@ func (c *DynamicConfig) SetValues(sensorMs, netMs int) {
 	c.NetworkSleep = time.Duration(netMs) * time.Millisecond
 }
 
-// Getter Aman
+// Fungsi Aman untuk Membaca Nilai
 func (c *DynamicConfig) GetValues() (time.Duration, time.Duration) {
 	c.RLock()
 	defer c.RUnlock()
